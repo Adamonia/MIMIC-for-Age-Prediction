@@ -37,7 +37,14 @@ SEED      = 42
 N_BOOT    = 1000
 DEVICE    = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-os.makedirs(OUT_DIR, exist_ok=True)
+D_SCATTER = os.path.join(OUT_DIR, 'scatter_residuals')
+D_MAE     = os.path.join(OUT_DIR, 'forest_plots', 'MAE')
+D_ME      = os.path.join(OUT_DIR, 'forest_plots', 'mean_error')
+D_R       = os.path.join(OUT_DIR, 'forest_plots', 'pearson_r')
+D_FEAT    = os.path.join(OUT_DIR, 'feature_importance')
+D_SUM     = os.path.join(OUT_DIR, 'summary')
+for d in (OUT_DIR, D_SCATTER, D_MAE, D_ME, D_R, D_FEAT, D_SUM):
+    os.makedirs(d, exist_ok=True)
 torch.manual_seed(SEED)
 np.random.seed(SEED)
 print(f"Device : {DEVICE}")
@@ -405,7 +412,7 @@ ax.set_yticklabels([ppg_cols[i] for i in top[::-1]], fontsize=9)
 ax.set_xlabel('Feature importance')
 ax.set_title(f'Top 30 PPG Features – {tree_name}', fontweight='bold')
 plt.tight_layout()
-plt.savefig(f'{OUT_DIR}/feature_importance.png', dpi=150, bbox_inches='tight')
+plt.savefig(f'{D_FEAT}/feature_importance.png', dpi=150, bbox_inches='tight')
 plt.close()
 print("Saved feature_importance.png")
 
@@ -527,7 +534,7 @@ def build_rows(df_t, yt, yp):
     return rows
 
 
-def forest_plot(rows, overall, mk, lo_k, hi_k, xlabel, fname, model_label=''):
+def forest_plot(rows, overall, mk, lo_k, hi_k, xlabel, fname, model_label='', out_dir=None):
     data_rows = [r for r in rows if not r['is_hdr'] and mk in r
                  and r.get(mk) is not None and not np.isnan(r.get(mk, np.nan))]
     if not data_rows:
@@ -615,9 +622,10 @@ def forest_plot(rows, overall, mk, lo_k, hi_k, xlabel, fname, model_label=''):
         f'Model: {model_label}  |  Test set N={overall["n"]}',
         fontsize=10, fontweight='bold',
     )
-    plt.savefig(f'{OUT_DIR}/{fname}', dpi=150, bbox_inches='tight')
+    save_dir = out_dir if out_dir else OUT_DIR
+    plt.savefig(os.path.join(save_dir, fname), dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"  Saved {fname}")
+    print(f"  Saved {os.path.relpath(os.path.join(save_dir, fname), OUT_DIR)}")
 
 
 # ==============================================================================
@@ -670,9 +678,9 @@ for name, pred in ALL_MODELS.items():
              bbox=dict(boxstyle='round', fc='white', alpha=0.88))
 
     plt.tight_layout()
-    plt.savefig(f'{OUT_DIR}/{_slug(name)}.png', dpi=150, bbox_inches='tight')
+    plt.savefig(f'{D_SCATTER}/{_slug(name)}.png', dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"  Saved {_slug(name)}.png")
+    print(f"  Saved scatter_residuals/{_slug(name)}.png")
 
 # ==============================================================================
 # 11  Per-model: forest plots  (MAE and Pearson r)
@@ -686,12 +694,12 @@ for name, pred in ALL_MODELS.items():
           f"  ME={overall['me']:+.2f} [{overall['me_lo']:+.2f}-{overall['me_hi']:+.2f}]"
           f"  r={overall['r']:.3f} [{overall['r_lo']:.3f}-{overall['r_hi']:.3f}]")
     forest_plot(rows, overall, 'mae', 'mae_lo', 'mae_hi',
-                'MAE [years]', f'forest_MAE_{slug}.png', model_label=name)
+                'MAE [years]', f'forest_MAE_{slug}.png', model_label=name, out_dir=D_MAE)
     forest_plot(rows, overall, 'me',  'me_lo',  'me_hi',
                 'Mean Error [years]  (+ = predicted too old)',
-                f'forest_ME_{slug}.png', model_label=name)
+                f'forest_ME_{slug}.png', model_label=name, out_dir=D_ME)
     forest_plot(rows, overall, 'r',   'r_lo',   'r_hi',
-                'Pearson r',   f'forest_r_{slug}.png',   model_label=name)
+                'Pearson r',   f'forest_r_{slug}.png',   model_label=name, out_dir=D_R)
 
 # ==============================================================================
 # 12  Summary figures  (all 8 models)
@@ -735,7 +743,7 @@ for ax, panel_names, vals_key, ylabel, best_is_min, subtitle in zip(
                 label, ha='center', va='bottom', fontsize=8,
                 fontweight='bold' if i == best_idx else 'normal')
 plt.tight_layout()
-plt.savefig(f'{OUT_DIR}/summary_comparison.png', dpi=150, bbox_inches='tight')
+plt.savefig(f'{D_SUM}/summary_comparison.png', dpi=150, bbox_inches='tight')
 plt.close()
 print("Saved summary_comparison.png")
 
@@ -757,7 +765,7 @@ ax.set_ylabel('Prediction error [years]')
 ax.legend(handles=[Line2D([0],[0], color='black', lw=1.5, label='Mean'),
                    Line2D([0],[0], color='red',   lw=1.5, label='Median')], fontsize=9)
 plt.tight_layout()
-plt.savefig(f'{OUT_DIR}/summary_errors.png', dpi=150, bbox_inches='tight')
+plt.savefig(f'{D_SUM}/summary_errors.png', dpi=150, bbox_inches='tight')
 plt.close()
 print("Saved summary_errors.png")
 
@@ -911,7 +919,7 @@ for ax, (name, imps) in zip(axes.flat, perm_imps.items()):
     ax.set_xlabel('Mean MAE increase [years]', fontsize=8)
     ax.set_title(name, fontweight='bold', fontsize=10)
 plt.tight_layout()
-plt.savefig(f'{OUT_DIR}/feature_importance_permutation.png', dpi=150, bbox_inches='tight')
+plt.savefig(f'{D_FEAT}/feature_importance_permutation.png', dpi=150, bbox_inches='tight')
 plt.close()
 print("Saved feature_importance_permutation.png")
 
@@ -942,7 +950,7 @@ for r in range(len(shared_feats)):
         ax.text(c, r, f'{v:.3f}', ha='center', va='center',
                 fontsize=6.5, color='black')
 plt.tight_layout()
-plt.savefig(f'{OUT_DIR}/feature_importance_heatmap.png', dpi=150, bbox_inches='tight')
+plt.savefig(f'{D_FEAT}/feature_importance_heatmap.png', dpi=150, bbox_inches='tight')
 plt.close()
 print("Saved feature_importance_heatmap.png")
 

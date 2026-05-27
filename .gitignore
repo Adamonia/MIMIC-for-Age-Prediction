@@ -1,0 +1,3 @@
+# Stale pipeline outputs at repo root (pipeline saves to subfolders)
+/*.png
+/run_output.txt
