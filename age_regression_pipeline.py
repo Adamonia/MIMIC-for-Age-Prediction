@@ -762,9 +762,11 @@ plt.close()
 print("Saved summary_errors.png")
 
 # 12c  Age-calibration plot – ME by actual age bin (all models)
-age_bins   = [0, 40, 50, 60, 70, 200]
-age_labels = ['<40', '40–49', '50–59', '60–69', '≥70']
-bin_idx    = np.digitize(y_te, age_bins) - 1   # 0-based bin per sample
+age_bins   = [10, 20, 30, 40, 50, 60, 70, 80, 90]
+age_labels = ['10–19', '20–29', '30–39', '40–49', '50–59', '60–69', '70–79', '80–89']
+# age_bins defines left edges; bin b covers [age_bins[b], age_bins[b+1])
+bin_idx = np.searchsorted(age_bins, y_te, side='right') - 1
+bin_idx = np.clip(bin_idx, 0, len(age_labels) - 1)
 bin_counts = [int((bin_idx == b).sum()) for b in range(len(age_labels))]
 
 fig, ax = plt.subplots(figsize=(13, 6))
