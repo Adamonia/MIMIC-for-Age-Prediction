@@ -419,11 +419,12 @@ def bootstrap_metrics(yt, yp, n_boot=N_BOOT):
     n = len(yt)
     if n < 10:
         return None
-    maes, rs = [], []
+    maes, rs, mes = [], [], []
     for _ in range(n_boot):
         idx = rng.integers(0, n, n)
         yt_b, yp_b = yt[idx], yp[idx]
         maes.append(mean_absolute_error(yt_b, yp_b))
+        mes.append(float(np.mean(yp_b - yt_b)))
         if yt_b.std() > 0:
             rs.append(stats.pearsonr(yt_b, yp_b)[0])
     r_val = stats.pearsonr(yt, yp)[0] if yt.std() > 0 else np.nan
@@ -435,6 +436,9 @@ def bootstrap_metrics(yt, yp, n_boot=N_BOOT):
         r=r_val,
         r_lo=float(np.percentile(rs, 2.5))  if rs else np.nan,
         r_hi=float(np.percentile(rs, 97.5)) if rs else np.nan,
+        me=float(np.mean(yp - yt)),
+        me_lo=float(np.percentile(mes, 2.5)),
+        me_hi=float(np.percentile(mes, 97.5)),
     )
 
 
@@ -534,10 +538,20 @@ def forest_plot(rows, overall, mk, lo_k, hi_k, xlabel, fname, model_label=''):
           + [r[hi_k] for r in data_rows])
     vals = [v for v in vals if v is not None and not np.isnan(v)]
     ov   = overall[mk]
-    pad  = max((max(vals) - min(vals)) * 0.08, 0.01)
-    xlo  = max(0 if mk == 'mae' else -0.3, min(vals) - pad)
-    xhi  = min(999 if mk == 'mae' else 1.05, max(vals) + pad)
-    xlo, xhi = min(xlo, ov * 0.92), max(xhi, ov * 1.08)
+    pad  = max((max(vals) - min(vals)) * 0.08, 0.1)
+    if mk == 'mae':
+        xlo = max(0,    min(vals) - pad)
+        xhi = min(999,  max(vals) + pad)
+        xlo, xhi = min(xlo, ov * 0.92), max(xhi, ov * 1.08)
+    elif mk == 'me':
+        xlo = min(vals) - pad
+        xhi = max(vals) + pad
+        xlo = min(xlo, ov - pad, -pad)   # always include 0 on the left
+        xhi = max(xhi, ov + pad,  pad)   # always include 0 on the right
+    else:   # pearson r
+        xlo = max(-0.3, min(vals) - pad)
+        xhi = min(1.05, max(vals) + pad)
+        xlo, xhi = min(xlo, ov * 0.92), max(xhi, ov * 1.08)
     nr    = len(rows) + 3
     fig_h = max(14, nr * 0.21)
     fig   = plt.figure(figsize=(15, fig_h))
@@ -555,6 +569,8 @@ def forest_plot(rows, overall, mk, lo_k, hi_k, xlabel, fname, model_label=''):
     ax_c.tick_params(axis='x', labelsize=8)
     ax_c.set_xlabel(xlabel, fontsize=9)
     ax_c.axvline(ov, color='#cc0000', ls='--', lw=1.2, alpha=0.75, zorder=1)
+    if mk == 'me':   # extra zero line: no-bias reference
+        ax_c.axvline(0, color='#444444', ls=':', lw=1.0, alpha=0.55, zorder=1)
     ax_l.text(0.01, 0, 'Subgroup',  va='center', fontsize=9, fontweight='bold', zorder=5)
     ax_l.text(0.77, 0, 'N',         va='center', ha='center', fontsize=9, fontweight='bold', zorder=5)
     ax_l.text(0.93, 0, 'Mean age',  va='center', ha='center', fontsize=8.5, fontweight='bold', zorder=5)
@@ -667,9 +683,13 @@ for name, pred in ALL_MODELS.items():
     overall = bootstrap_metrics(y_te, pred)
     rows    = build_rows(df_te, y_te, pred)
     print(f"  {name}: MAE={overall['mae']:.2f} [{overall['mae_lo']:.2f}-{overall['mae_hi']:.2f}]"
+          f"  ME={overall['me']:+.2f} [{overall['me_lo']:+.2f}-{overall['me_hi']:+.2f}]"
           f"  r={overall['r']:.3f} [{overall['r_lo']:.3f}-{overall['r_hi']:.3f}]")
     forest_plot(rows, overall, 'mae', 'mae_lo', 'mae_hi',
                 'MAE [years]', f'forest_MAE_{slug}.png', model_label=name)
+    forest_plot(rows, overall, 'me',  'me_lo',  'me_hi',
+                'Mean Error [years]  (+ = predicted too old)',
+                f'forest_ME_{slug}.png', model_label=name)
     forest_plot(rows, overall, 'r',   'r_lo',   'r_hi',
                 'Pearson r',   f'forest_r_{slug}.png',   model_label=name)
 
@@ -740,6 +760,60 @@ plt.tight_layout()
 plt.savefig(f'{OUT_DIR}/summary_errors.png', dpi=150, bbox_inches='tight')
 plt.close()
 print("Saved summary_errors.png")
+
+# 12c  Age-calibration plot – ME by actual age bin (all models)
+age_bins   = [0, 40, 50, 60, 70, 200]
+age_labels = ['<40', '40–49', '50–59', '60–69', '≥70']
+bin_idx    = np.digitize(y_te, age_bins) - 1   # 0-based bin per sample
+bin_counts = [int((bin_idx == b).sum()) for b in range(len(age_labels))]
+
+fig, ax = plt.subplots(figsize=(13, 6))
+fig.suptitle('Age-Calibration: Mean Error by True Age Group\n'
+             '(positive = model predicts older than reality)',
+             fontsize=11, fontweight='bold')
+
+n_models  = len(mae_sorted)
+bar_w     = 0.8 / n_models
+x_base    = np.arange(len(age_labels))
+
+for mi, mname in enumerate(mae_sorted):
+    pred_m = ALL_MODELS[mname]
+    mes_bin, lo_bin, hi_bin = [], [], []
+    for b in range(len(age_labels)):
+        mask = bin_idx == b
+        if mask.sum() < 5:
+            mes_bin.append(np.nan); lo_bin.append(np.nan); hi_bin.append(np.nan)
+            continue
+        bt = bootstrap_metrics(y_te[mask], pred_m[mask])
+        mes_bin.append(bt['me'] if bt else np.nan)
+        lo_bin.append(bt['me_lo'] if bt else np.nan)
+        hi_bin.append(bt['me_hi'] if bt else np.nan)
+    x_pos = x_base + (mi - n_models / 2 + 0.5) * bar_w
+    clr   = MODEL_COLORS[mname]
+    bars  = ax.bar(x_pos, mes_bin, width=bar_w * 0.88,
+                   color=clr, alpha=0.82, label=mname,
+                   edgecolor='black', linewidth=0.4)
+    # 95% CI whiskers
+    for xp, me_v, lo_v, hi_v in zip(x_pos, mes_bin, lo_bin, hi_bin):
+        if np.isnan(me_v): continue
+        ax.plot([xp, xp], [lo_v, hi_v], color='black', lw=1.0, zorder=4)
+        ax.plot([xp - bar_w * 0.2, xp + bar_w * 0.2], [lo_v, lo_v],
+                color='black', lw=0.8, zorder=4)
+        ax.plot([xp - bar_w * 0.2, xp + bar_w * 0.2], [hi_v, hi_v],
+                color='black', lw=0.8, zorder=4)
+
+ax.axhline(0, color='black', ls='--', lw=1.2, alpha=0.6, label='No bias (ME=0)')
+ax.set_xticks(x_base)
+ax.set_xticklabels(
+    [f'{lab}\n(N={cnt})' for lab, cnt in zip(age_labels, bin_counts)],
+    fontsize=10)
+ax.set_ylabel('Mean Error [years]', fontsize=10)
+ax.set_xlabel('True age group', fontsize=10)
+ax.legend(fontsize=8, ncol=2, loc='upper right')
+plt.tight_layout()
+plt.savefig(f'{OUT_DIR}/summary/calibration_by_age.png', dpi=150, bbox_inches='tight')
+plt.close()
+print("Saved calibration_by_age.png")
 
 # ==============================================================================
 print("\n" + "=" * 65)
