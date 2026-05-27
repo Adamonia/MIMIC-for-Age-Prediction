@@ -821,9 +821,41 @@ ax.set_ylabel('Mean Error [years]', fontsize=10)
 ax.set_xlabel('True age group', fontsize=10)
 ax.legend(fontsize=8, ncol=2, loc='upper right')
 plt.tight_layout()
-plt.savefig(f'{OUT_DIR}/summary/calibration_by_age.png', dpi=150, bbox_inches='tight')
+plt.savefig(f'{D_SUM}/calibration_by_age.png', dpi=150, bbox_inches='tight')
 plt.close()
 print("Saved calibration_by_age.png")
+
+# 12d  Age distribution: real vs predicted  (all models)
+from scipy.stats import gaussian_kde
+age_range = np.linspace(float(y_te.min()) - 2, float(y_te.max()) + 2, 300)
+
+fig, ax = plt.subplots(figsize=(13, 6))
+fig.suptitle('Distribution of Real vs Predicted Ages – All Models',
+             fontsize=12, fontweight='bold')
+
+# Real ages: filled histogram + KDE
+ax.hist(y_te, bins=30, density=True, color='#cccccc', edgecolor='white',
+        linewidth=0.4, alpha=0.85, label='Real ages', zorder=1)
+kde_real = gaussian_kde(y_te, bw_method=0.15)
+ax.plot(age_range, kde_real(age_range), color='#333333', lw=2.0,
+        ls='-', label='Real (KDE)', zorder=3)
+
+# Predicted: KDE line per model (sorted by MAE so legend is ordered)
+for mname in mae_sorted:
+    pred_m = ALL_MODELS[mname]
+    kde_p  = gaussian_kde(pred_m, bw_method=0.15)
+    ax.plot(age_range, kde_p(age_range),
+            color=MODEL_COLORS[mname], lw=1.6, ls='--',
+            label=mname, zorder=2, alpha=0.9)
+
+ax.set_xlabel('Age [years]', fontsize=10)
+ax.set_ylabel('Density', fontsize=10)
+ax.legend(fontsize=8, ncol=2, loc='upper left')
+ax.set_xlim(age_range[0], age_range[-1])
+plt.tight_layout()
+plt.savefig(f'{D_SUM}/age_distribution.png', dpi=150, bbox_inches='tight')
+plt.close()
+print("Saved age_distribution.png")
 
 # ==============================================================================
 print("\n" + "=" * 65)
