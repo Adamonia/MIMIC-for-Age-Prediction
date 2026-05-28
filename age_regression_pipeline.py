@@ -39,11 +39,12 @@ DEVICE    = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 D_SCATTER = os.path.join(OUT_DIR, 'scatter_residuals')
 D_MAE     = os.path.join(OUT_DIR, 'forest_plots', 'MAE')
+D_MAPE    = os.path.join(OUT_DIR, 'forest_plots', 'MAPE')
 D_ME      = os.path.join(OUT_DIR, 'forest_plots', 'mean_error')
 D_R       = os.path.join(OUT_DIR, 'forest_plots', 'pearson_r')
 D_FEAT    = os.path.join(OUT_DIR, 'feature_importance')
 D_SUM     = os.path.join(OUT_DIR, 'summary')
-for d in (OUT_DIR, D_SCATTER, D_MAE, D_ME, D_R, D_FEAT, D_SUM):
+for d in (OUT_DIR, D_SCATTER, D_MAE, D_MAPE, D_ME, D_R, D_FEAT, D_SUM):
     os.makedirs(d, exist_ok=True)
 torch.manual_seed(SEED)
 np.random.seed(SEED)
@@ -426,11 +427,12 @@ def bootstrap_metrics(yt, yp, n_boot=N_BOOT):
     n = len(yt)
     if n < 10:
         return None
-    maes, rs, mes = [], [], []
+    maes, mapes, rs, mes = [], [], [], []
     for _ in range(n_boot):
         idx = rng.integers(0, n, n)
         yt_b, yp_b = yt[idx], yp[idx]
         maes.append(mean_absolute_error(yt_b, yp_b))
+        mapes.append(float(np.mean(np.abs(yp_b - yt_b) / np.abs(yt_b)) * 100))
         mes.append(float(np.mean(yp_b - yt_b)))
         if yt_b.std() > 0:
             rs.append(stats.pearsonr(yt_b, yp_b)[0])
@@ -440,6 +442,9 @@ def bootstrap_metrics(yt, yp, n_boot=N_BOOT):
         mae=mean_absolute_error(yt, yp),
         mae_lo=float(np.percentile(maes, 2.5)),
         mae_hi=float(np.percentile(maes, 97.5)),
+        mape=float(np.mean(np.abs(yp - yt) / np.abs(yt)) * 100),
+        mape_lo=float(np.percentile(mapes, 2.5)),
+        mape_hi=float(np.percentile(mapes, 97.5)),
         r=r_val,
         r_lo=float(np.percentile(rs, 2.5))  if rs else np.nan,
         r_hi=float(np.percentile(rs, 97.5)) if rs else np.nan,
@@ -546,7 +551,7 @@ def forest_plot(rows, overall, mk, lo_k, hi_k, xlabel, fname, model_label='', ou
     vals = [v for v in vals if v is not None and not np.isnan(v)]
     ov   = overall[mk]
     pad  = max((max(vals) - min(vals)) * 0.08, 0.1)
-    if mk == 'mae':
+    if mk in ('mae', 'mape'):
         xlo = max(0,    min(vals) - pad)
         xhi = min(999,  max(vals) + pad)
         xlo, xhi = min(xlo, ov * 0.92), max(xhi, ov * 1.08)
@@ -691,15 +696,18 @@ for name, pred in ALL_MODELS.items():
     overall = bootstrap_metrics(y_te, pred)
     rows    = build_rows(df_te, y_te, pred)
     print(f"  {name}: MAE={overall['mae']:.2f} [{overall['mae_lo']:.2f}-{overall['mae_hi']:.2f}]"
+          f"  MAPE={overall['mape']:.1f}% [{overall['mape_lo']:.1f}-{overall['mape_hi']:.1f}]"
           f"  ME={overall['me']:+.2f} [{overall['me_lo']:+.2f}-{overall['me_hi']:+.2f}]"
           f"  r={overall['r']:.3f} [{overall['r_lo']:.3f}-{overall['r_hi']:.3f}]")
-    forest_plot(rows, overall, 'mae', 'mae_lo', 'mae_hi',
-                'MAE [years]', f'forest_MAE_{slug}.png', model_label=name, out_dir=D_MAE)
-    forest_plot(rows, overall, 'me',  'me_lo',  'me_hi',
+    forest_plot(rows, overall, 'mae',  'mae_lo',  'mae_hi',
+                'MAE [years]',  f'forest_MAE_{slug}.png',  model_label=name, out_dir=D_MAE)
+    forest_plot(rows, overall, 'mape', 'mape_lo', 'mape_hi',
+                'MAPE [%]',     f'forest_MAPE_{slug}.png', model_label=name, out_dir=D_MAPE)
+    forest_plot(rows, overall, 'me',   'me_lo',   'me_hi',
                 'Mean Error [years]  (+ = predicted too old)',
                 f'forest_ME_{slug}.png', model_label=name, out_dir=D_ME)
-    forest_plot(rows, overall, 'r',   'r_lo',   'r_hi',
-                'Pearson r',   f'forest_r_{slug}.png',   model_label=name, out_dir=D_R)
+    forest_plot(rows, overall, 'r',    'r_lo',    'r_hi',
+                'Pearson r',    f'forest_r_{slug}.png',    model_label=name, out_dir=D_R)
 
 # ==============================================================================
 # 12  Summary figures  (all 8 models)
